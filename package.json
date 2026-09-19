@@ -1,0 +1,27 @@
+{
+  "name": "interview-prep-ai",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI Interview Prep Kit — monorepo root.",
+  "workspaces": [
+    "shared",
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "npm run build:shared && concurrently -n backend,frontend -c blue,magenta \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "npm run dev --workspace @interview-prep-ai/backend",
+    "dev:frontend": "npm run dev --workspace @interview-prep-ai/frontend",
+    "build:shared": "npm run build --workspace @interview-prep-ai/shared",
+    "build": "npm run build:shared && npm run build --workspace @interview-prep-ai/backend && npm run build --workspace @interview-prep-ai/frontend",
+    "typecheck": "npm run typecheck --workspace @interview-prep-ai/shared && npm run typecheck --workspace @interview-prep-ai/backend",
+    "typecheck:shared": "npm run typecheck --workspace @interview-prep-ai/shared",
+    "test": "npm run test:shared && npm run test:backend",
+    "test:shared": "npm run test --workspace @interview-prep-ai/shared",
+    "test:backend": "npm run test --workspace @interview-prep-ai/backend",
+    "lint:frontend": "npm run lint --workspace @interview-prep-ai/frontend"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}
