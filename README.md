@@ -307,13 +307,146 @@ Company scraping/research, question generation, flashcard generation,
 schedule generation, coverage checking, MongoDB persistence, authentication,
 and any frontend UI beyond the Step 1 starter page.
 
+## Step 4 — Requirements → Interview Questions
+
+The second stage of the AI generation pipeline: transforming an array of validated
+requirements (`Requirement[]`) into grounded, schema-validated interview questions
+(`InterviewQuestion[]`).
+
+Each question is strictly grounded in one or more supplied requirement IDs, and
+evaluated across standard categories (`technical`, `behavioural`, `system-design`,
+`company-fit`) and difficulty ratings (`1`, `2`, `3`).
+
+> **Verification status:** the question-generation service and LLM pipeline are
+> implemented and fully covered by automated unit/integration tests against a fake
+> provider (`FakeLLMProvider`), and the HTTP endpoint has been verified for both
+> successful responses and failure modes (`INVALID_REQUIREMENTS`, `INVALID_REQUEST`,
+> `LLM_NOT_CONFIGURED`, `LLM_PROVIDER_ERROR`, `INVALID_LLM_OUTPUT`). **A real call to the
+> live Gemini API has NOT been performed**, because no `LLM_API_KEY` credentials were
+> present in this environment. The integration operates through the same provider
+> abstraction established in Step 3.
+
+**Endpoint:** `POST /api/questions/generate`
+
+**Request:**
+
+```json
+{
+  "requirements": [
+    {
+      "id": "req-001",
+      "text": "Strong experience with React and state management",
+      "kind": "technical",
+      "priority": "must"
+    },
+    {
+      "id": "req-002",
+      "text": "Experience leading technical discussions and mentoring junior engineers",
+      "kind": "behavioural",
+      "priority": "must"
+    }
+  ]
+}
+```
+
+**Success response (200):**
+
+```json
+{
+  "questions": [
+    {
+      "id": "q-001",
+      "prompt": "How do you evaluate state management solutions in a React application?",
+      "category": "technical",
+      "difficulty": 2,
+      "requirement_ids": ["req-001"],
+      "answer_outline": "Discuss criteria such as bundle size, rendering performance, boilerplate, and team familiarity."
+    },
+    {
+      "id": "q-002",
+      "prompt": "Describe a scenario where you mentored an engineer through an architectural decision.",
+      "category": "behavioural",
+      "difficulty": 2,
+      "requirement_ids": ["req-002"],
+      "answer_outline": "Highlight coaching techniques, active listening, trade-off analysis, and outcome evaluation."
+    }
+  ]
+}
+```
+
+**Error responses:**
+
+| Code | HTTP | Meaning |
+|---|---|---|
+| `INVALID_REQUEST` | 400 | Request body missing or invalid structure (e.g. requirements not an array) |
+| `INVALID_REQUIREMENTS` | 400 | Empty requirements list or invalid requirement items |
+| `LLM_NOT_CONFIGURED` | 500 | No `LLM_API_KEY` configured on the server |
+| `LLM_PROVIDER_ERROR` | 502 | Provider failure (transport, rate limits, 5xx, or authentication) |
+| `INVALID_LLM_OUTPUT` | 502 | Model output could not be parsed, lacked required fields, or persistently referenced unknown requirement IDs |
+
+### Pipeline
+
+```
+Requirement[]
+  → validateRequirements()          reject non-arrays, empty lists, or invalid items
+  → buildUserContent()               format requirements within <<<REQUIREMENTS_START/END>>>
+  → LLM call (Gemini)                system instruction with grounding rules + delimited user data
+  → extractJsonObject()              strip markdown fences / surrounding prose
+  → Zod validation (wire shape)      LlmQuestionOutputSchema (rejects empty prompts/outlines & unknown IDs)
+  → repair retry (max 1)             stricter correction instruction if output is invalid
+  → normalizeQuestions()             trim whitespace, dedupe by prompt, merge requirement IDs
+  → deterministic ID assignment      q-001, q-002, ... by surviving order
+  → InterviewQuestionSchema guard    referential integrity check (question.requirement_ids ⊆ input IDs)
+```
+
+### Grounding and security
+
+Requirements originate from user-provided job descriptions and are treated strictly as untrusted data.
+They are encapsulated within explicit security delimiters:
+`<<<REQUIREMENTS_START>>>` and `<<<REQUIREMENTS_END>>>`.
+The system prompt instructs the model that content between delimiters is data to analyze, not instructions to execute, neutralizing prompt-injection attempts.
+
+Every question generated must map directly to one or more supplied requirement IDs (`requirement_ids ⊆ supplied requirement IDs`). Model-invented requirement IDs and questions referencing nonexistent requirements are rejected.
+
+### Deterministic IDs
+
+Application code assigns stable, sequential IDs (`q-001`, `q-002`, ...) based on the surviving order after normalization and deduplication. Model-generated IDs, random identifiers, and timestamps are discarded.
+
+### Normalization and deduplication
+
+- Prompts and answer outlines are trimmed and internal whitespace collapsed. Empty prompts or outlines are strictly rejected by Zod wire validation before normalization occurs and are never silently converted or dropped.
+- Exact and near-duplicate questions (case- and punctuation-insensitive) are collapsed, preserving the earlier question and merging referenced requirement IDs.
+
+### Error and retry strategy
+
+- **Transient provider failures**: up to 2 attempts with exponential backoff.
+- **Malformed JSON or invalid schema**: exactly one targeted repair pass with `QUESTION_GENERATION_REPAIR_INSTRUCTION`.
+- If the repair fails or the model persistently returns invalid questions, `INVALID_LLM_OUTPUT` (502) is raised.
+
+### Deferral notice (Step 5)
+
+Step 4 only produces the initial grounded question draft. The following are intentionally deferred to Step 5:
+- Uncovered requirement detection
+- Requirement coverage scoring
+- Missing-question detection and second-pass generation
+- Coverage repair and "all must requirements covered" enforcement
+
+### Testing
+
+Tests run using `FakeLLMProvider` and test suites:
+- `backend/src/utils/question-normalizer.test.ts`
+- `backend/src/services/question-generator.test.ts`
+- `backend/src/app.test.ts` (API integration tests for `POST /api/questions/generate`)
+
+Coverage includes: valid questions generation, empty requirements rejection, non-array rejection, unknown requirement ID rejection and repair, invalid categories/difficulties, empty prompt/outline handling, markdown fences, single repair success, persistent repair failure, duplicate deduplication, deterministic IDs, and prompt injection safety.
+
 ## Roadmap
 
 ```
 Step 1  Project foundation                         ✅ done
 Step 2  InterviewKit contract (types + schemas)     ✅ done
-Step 3  Job description → Requirements              ✅ done (this step)
-Step 4  Requirements → Questions                    not started
+Step 3  Job description → Requirements              ✅ done
+Step 4  Requirements → Questions                    ✅ done (this step)
 Step 5  Coverage + missing-question second pass      not started
 Step 6  Deterministic study schedule                not started
 Step 7  Company research                            not started

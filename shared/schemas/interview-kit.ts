@@ -83,7 +83,7 @@ export const InterviewQuestionSchema = z.object({
   prompt: nonEmptyString,
   category: QuestionCategorySchema,
   difficulty: QuestionDifficultySchema,
-  requirement_ids: z.array(z.string()),
+  requirement_ids: z.array(nonEmptyString).min(1),
   answer_outline: nonEmptyString,
 });
 export type InterviewQuestion = z.infer<typeof InterviewQuestionSchema>;

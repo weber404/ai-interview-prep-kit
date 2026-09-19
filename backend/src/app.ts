@@ -3,6 +3,7 @@ import express, { type Express } from 'express';
 
 import { healthRouter } from './routes/health-routes.js';
 import { createRequirementRouter } from './routes/requirement-routes.js';
+import { createQuestionRouter } from './routes/question-routes.js';
 import { createLLMProvider } from './services/llm/provider-factory.js';
 import type { LLMProvider } from './services/llm/llm-provider.js';
 import { AppError } from './types/errors.js';
@@ -25,6 +26,7 @@ export function createApp(deps: AppDeps = {}): Express {
 
   app.use('/api', healthRouter);
   app.use('/api', createRequirementRouter({ getProvider }));
+  app.use('/api', createQuestionRouter({ getProvider }));
 
   app.use((_req, res) => {
     res

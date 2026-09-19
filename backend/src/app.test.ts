@@ -173,3 +173,181 @@ test('missing credentials surface as LLM_NOT_CONFIGURED, not fake data', async (
     if (previous !== undefined) process.env.LLM_API_KEY = previous;
   }
 });
+
+function postQuestions(baseUrl: string, body: unknown): Promise<Response> {
+  return fetch(`${baseUrl}/api/questions/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+const VALID_QUESTIONS_OUTPUT = JSON.stringify({
+  questions: [
+    {
+      requirement_ids: ['req-001'],
+      category: 'technical',
+      prompt: 'How do you handle state management with Redux?',
+      answer_outline: 'Explain actions, reducers, store, and immutability.',
+      difficulty: 2,
+    },
+  ],
+});
+
+test('POST /api/questions/generate returns questions on success', async () => {
+  const provider = new FakeLLMProvider([VALID_QUESTIONS_OUTPUT]);
+
+  await withServer({ getProvider: () => provider }, async (baseUrl) => {
+    const response = await postQuestions(baseUrl, {
+      requirements: [
+        {
+          id: 'req-001',
+          text: 'Experience with React and Redux',
+          kind: 'technical',
+          priority: 'must',
+        },
+      ],
+    });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      questions: [
+        {
+          id: 'q-001',
+          prompt: 'How do you handle state management with Redux?',
+          category: 'technical',
+          difficulty: 2,
+          requirement_ids: ['req-001'],
+          answer_outline: 'Explain actions, reducers, store, and immutability.',
+        },
+      ],
+    });
+  });
+});
+
+test('POST /api/questions/generate with empty requirements returns 400', async () => {
+  const provider = new FakeLLMProvider([VALID_QUESTIONS_OUTPUT]);
+
+  await withServer({ getProvider: () => provider }, async (baseUrl) => {
+    const response = await postQuestions(baseUrl, { requirements: [] });
+
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), {
+      error: {
+        code: 'INVALID_REQUIREMENTS',
+        message: 'Requirements list cannot be empty.',
+      },
+    });
+    assert.equal(provider.callCount, 0);
+  });
+});
+
+test('POST /api/questions/generate with missing requirements field returns 400', async () => {
+  await withServer(
+    { getProvider: () => new FakeLLMProvider([VALID_QUESTIONS_OUTPUT]) },
+    async (baseUrl) => {
+      const response = await postQuestions(baseUrl, {});
+      assert.equal(response.status, 400);
+
+      const body = (await response.json()) as { error: { code: string } };
+      assert.equal(body.error.code, 'INVALID_REQUEST');
+    },
+  );
+});
+
+test('POST /api/questions/generate provider failure returns 502 LLM_PROVIDER_ERROR without internals', async () => {
+  const provider = new FakeLLMProvider([
+    new ProviderError('HTTP 401 for key sk-secret-token', { retryable: false }),
+  ]);
+
+  await withServer({ getProvider: () => provider }, async (baseUrl) => {
+    const response = await postQuestions(baseUrl, {
+      requirements: [
+        {
+          id: 'req-001',
+          text: 'React experience',
+          kind: 'technical',
+          priority: 'must',
+        },
+      ],
+    });
+
+    assert.equal(response.status, 502);
+    const raw = await response.text();
+    assert.ok(!raw.includes('sk-secret-token'));
+    assert.deepEqual(JSON.parse(raw), {
+      error: {
+        code: 'LLM_PROVIDER_ERROR',
+        message: 'Question generation could not be completed.',
+      },
+    });
+  });
+});
+
+test('POST /api/questions/generate persistently invalid model output returns 502 INVALID_LLM_OUTPUT', async () => {
+  const provider = new FakeLLMProvider(['nonsense', 'more nonsense']);
+
+  await withServer({ getProvider: () => provider }, async (baseUrl) => {
+    const response = await postQuestions(baseUrl, {
+      requirements: [
+        {
+          id: 'req-001',
+          text: 'React experience',
+          kind: 'technical',
+          priority: 'must',
+        },
+      ],
+    });
+
+    assert.equal(response.status, 502);
+    assert.deepEqual(await response.json(), {
+      error: {
+        code: 'INVALID_LLM_OUTPUT',
+        message: 'The language model returned an invalid question structure.',
+      },
+    });
+  });
+});
+
+test('invalid requirements are reported before provider resolution even without credentials', async () => {
+  const previous = process.env.LLM_API_KEY;
+  delete process.env.LLM_API_KEY;
+
+  try {
+    await withServer({}, async (baseUrl) => {
+      const response = await postQuestions(baseUrl, { requirements: [] });
+
+      assert.equal(response.status, 400);
+      const body = (await response.json()) as { error: { code: string } };
+      assert.equal(body.error.code, 'INVALID_REQUIREMENTS');
+    });
+  } finally {
+    if (previous !== undefined) process.env.LLM_API_KEY = previous;
+  }
+});
+
+test('POST /api/questions/generate missing credentials surface as LLM_NOT_CONFIGURED', async () => {
+  const previous = process.env.LLM_API_KEY;
+  delete process.env.LLM_API_KEY;
+
+  try {
+    await withServer({}, async (baseUrl) => {
+      const response = await postQuestions(baseUrl, {
+        requirements: [
+          {
+            id: 'req-001',
+            text: 'React experience',
+            kind: 'technical',
+            priority: 'must',
+          },
+        ],
+      });
+
+      assert.equal(response.status, 500);
+      const body = (await response.json()) as { error: { code: string } };
+      assert.equal(body.error.code, 'LLM_NOT_CONFIGURED');
+    });
+  } finally {
+    if (previous !== undefined) process.env.LLM_API_KEY = previous;
+  }
+});
